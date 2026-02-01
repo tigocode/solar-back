@@ -17,6 +17,9 @@ app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 
 app.use("/api", routes);
+app.get('/status', (req, res) => {
+  res.status(200).json({ message: 'Sistema Solar-Back Online' });
+});
 
 app.listen(PORT, () => {
   console.log(`🔥 Servidor rodando em http://localhost:${PORT}`);
