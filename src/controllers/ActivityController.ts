@@ -2,113 +2,130 @@ import { Request, Response } from 'express';
 import { getRepository } from 'fireorm';
 import { Activity } from '../models/Activity';
 
+// Função auxiliar para calcular tempo (Ex: 2h 15m)
+const calculateDuration = (startDateIso: string) => {
+    const start = new Date(startDateIso).getTime();
+    const now = new Date().getTime();
+    const diffMs = now - start;
+
+    if (diffMs < 0) return "0m";
+
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+};
+
 export const ActivityController = {
   
-  // Listar todas
   async index(req: Request, res: Response) {
     try {
       const repo = getRepository(Activity);
-      
-      // Busca todas
       const activities = await repo.find();
-      
-      // O FireORM básico não tem "orderBy" complexo na query direta de array,
-      // então ordenamos via Javascript (Data mais recente primeiro)
-      const sorted = activities.sort((a, b) => {
-        return new Date(b.data).getTime() - new Date(a.data).getTime();
-      });
-
+      const sorted = activities.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
       return res.json(sorted);
     } catch (error) {
-      console.error("Erro ao listar atividades:", error);
       return res.status(500).json({ error: 'Erro ao buscar atividades' });
     }
   },
 
-  // Criar
   async create(req: Request, res: Response) {
     try {
-      const { titulo, categoria, subcategoria, data, duracao, descricao, status, fotos } = req.body;
+      const { titulo, categoria, subcategoria, data, descricao, status, fotos } = req.body;
 
       if (!titulo || !categoria || !data) {
-        return res.status(400).json({ error: 'Título, Categoria e Data são obrigatórios' });
+        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
       }
 
       const repo = getRepository(Activity);
-      
       const newActivity = new Activity();
+      
       newActivity.titulo = titulo;
       newActivity.categoria = categoria;
       newActivity.subcategoria = subcategoria || '';
       newActivity.data = data;
-      newActivity.duracao = duracao || '';
       newActivity.descricao = descricao || '';
       newActivity.status = status || 'aberta';
       newActivity.fotos = Array.isArray(fotos) ? fotos : [];
+      
+      // --- LÓGICA DE TEMPO ---
+      const now = new Date().toISOString();
+      newActivity.createdAt = now; // Salva o momento exato
+      newActivity.duracao = "0m";  // Começa zerado
 
       const saved = await repo.create(newActivity);
       return res.json(saved);
     } catch (error) {
-      console.error("Erro ao criar atividade:", error);
+      console.error("Erro ao criar:", error);
       return res.status(500).json({ error: 'Erro ao criar atividade' });
     }
   },
 
-  // Atualizar
+  // ... (Update e Delete e ToggleStatus mantêm iguais) ...
   async update(req: Request, res: Response) {
-    try {
-      const id = req.params.id as string;
-      const data = req.body;
+      try {
+        const id = req.params.id as string;
+        const data = req.body;
+        const repo = getRepository(Activity);
+        const activity = await repo.findById(id);
+        if (!activity) return res.status(404).json({ error: 'Atividade não encontrada' });
+        
+        // Remove createdAt/duracao do update manual para não estragar a lógica
+        delete data.createdAt;
+        delete data.duracao;
 
-      const repo = getRepository(Activity);
-      const activity = await repo.findById(id);
-
-      if (!activity) return res.status(404).json({ error: 'Atividade não encontrada' });
-
-      // Atualiza campos
-      if (data.titulo) activity.titulo = data.titulo;
-      if (data.categoria) activity.categoria = data.categoria;
-      if (data.subcategoria !== undefined) activity.subcategoria = data.subcategoria;
-      if (data.data) activity.data = data.data;
-      if (data.duracao !== undefined) activity.duracao = data.duracao;
-      if (data.descricao !== undefined) activity.descricao = data.descricao;
-      if (data.status) activity.status = data.status;
-      if (data.fotos) activity.fotos = data.fotos;
-
-      const updated = await repo.update(activity);
-      return res.json(updated);
-    } catch (error) {
-      return res.status(500).json({ error: 'Erro ao atualizar atividade' });
-    }
+        Object.assign(activity, data);
+        const updated = await repo.update(activity);
+        return res.json(updated);
+      } catch (error) { return res.status(500).json({ error: 'Erro ao atualizar' }); }
   },
 
-  // Alternar Status (Atalho útil)
+  async delete(req: Request, res: Response) {
+      try {
+        const id = req.params.id as string;
+        await getRepository(Activity).delete(id);
+        return res.status(204).send();
+      } catch (e) { return res.status(500).json({error: 'Erro'}); }
+  },
+
   async toggleStatus(req: Request, res: Response) {
-    try {
+     try {
         const id = req.params.id as string;
         const repo = getRepository(Activity);
         const activity = await repo.findById(id);
-  
-        if (!activity) return res.status(404).json({ error: 'Atividade não encontrada' });
-  
-        activity.status = activity.status === 'aberta' ? 'finalizada' : 'aberta';
-        
-        const updated = await repo.update(activity);
-        return res.json(updated);
-      } catch (error) {
-        return res.status(500).json({ error: 'Erro ao alterar status' });
-      }
+        if(activity) {
+            activity.status = activity.status === 'aberta' ? 'finalizada' : 'aberta';
+            await repo.update(activity);
+            return res.json(activity);
+        }
+     } catch (e) { return res.status(500).json({error: 'Erro'}); }
   },
 
-  // Excluir
-  async delete(req: Request, res: Response) {
+  // --- NOVA FUNÇÃO DO ROBÔ (Chamada pelo Server) ---
+  async updateOpenActivitiesDuration() {
     try {
-      const id = req.params.id as string;
-      const repo = getRepository(Activity);
-      await repo.delete(id);
-      return res.status(204).send();
+        console.log("⏰ Rodando atualização de durações...");
+        const repo = getRepository(Activity);
+        const activities = await repo.find();
+        
+        // Filtra apenas as abertas que possuem createdAt
+        const openActivities = activities.filter(a => a.status === 'aberta' && a.createdAt);
+
+        let count = 0;
+        for (const act of openActivities) {
+            const newDuration = calculateDuration(act.createdAt);
+            
+            // Só atualiza se mudou
+            if (act.duracao !== newDuration) {
+                act.duracao = newDuration;
+                await repo.update(act);
+                count++;
+            }
+        }
+        if(count > 0) console.log(`✅ ${count} atividades tiveram a duração atualizada.`);
     } catch (error) {
-      return res.status(500).json({ error: 'Erro ao excluir atividade' });
+        console.error("Erro ao atualizar durações:", error);
     }
   }
 };
