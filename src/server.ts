@@ -20,6 +20,7 @@ app.use("/api", routes);
 app.get('/status', (req, res) => {
   res.status(200).json({ message: 'Sistema Solar-Back Online' });
 });
+console.log("Cloudinary Config Check:", process.env.CLOUDINARY_CLOUD_NAME ? "OK (Carregado)" : "FALHOU (Undefined)");
 
 app.listen(PORT, () => {
   console.log(`🔥 Servidor rodando em http://localhost:${PORT}`);
