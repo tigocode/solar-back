@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { CategoryController } from './controllers/CategoryController';
 import { ItemController } from './controllers/ItemController';
 import { ActivityController } from './controllers/ActivityController';
+import { UserController } from './controllers/UserController';
 
 const router = Router();
 
@@ -29,5 +30,12 @@ router.post('/activities', ActivityController.create);
 router.put('/activities/:id', ActivityController.update);
 router.patch('/activities/:id/toggle', ActivityController.toggleStatus);
 router.delete('/activities/:id', ActivityController.delete);
+
+// --- ROTAS DE USUÁRIOS ---
+router.get('/users', UserController.index);
+router.post('/users', UserController.create);
+router.put('/users/:id', UserController.update);
+router.delete('/users/:id', UserController.delete);
+router.post('/login', UserController.login); // Rota especial de Login
 
 export default router;
