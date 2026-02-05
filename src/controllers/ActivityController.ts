@@ -5,6 +5,8 @@ import { uploadBase64Image } from '../config/cloudinary';
 
 // Função auxiliar para calcular tempo (Ex: 2h 15m)
 const calculateDuration = (startDateIso: string) => {
+    if (!startDateIso) return "0m";
+
     const start = new Date(startDateIso).getTime();
     const now = new Date().getTime();
     const diffMs = now - start;
@@ -63,33 +65,55 @@ export const ActivityController = {
 
   async create(req: Request, res: Response) {
     try {
-      const { titulo, categoria, subcategoria, data, duracao, descricao, status, fotos } = req.body;
+      // Recebemos userId, userName e setor do Front
+      const { titulo, categoria, subcategoria, setor, data, duracao, descricao, status, fotos, userId, userName } = req.body;
 
-      if (!titulo || !categoria || !data) {
-        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+      if (!categoria || !data) { 
+         return res.status(400).json({ error: 'Campos obrigatórios faltando' });
       }
 
-      // Processa as imagens (Sobe para Cloudinary e retorna URLs)
+      // Processa as imagens
       const fotoUrls = await processImages(fotos);
 
       const repo = getRepository(Activity);
-      
       const newActivity = new Activity();
-      newActivity.titulo = titulo;
+
+      // REGRA 6: Se for Roçada, o título é gerado automaticamente
+      if (categoria === 'Roçada') {
+         newActivity.titulo = `Roçada - ${subcategoria || 'Geral'} - ${setor || 'N/A'}`;
+      } else {
+         newActivity.titulo = titulo || 'Sem Título';
+      }
+
       newActivity.categoria = categoria;
       newActivity.subcategoria = subcategoria || '';
+      newActivity.setor = setor || ''; // Salva o setor
       newActivity.data = data;
-      newActivity.duracao = duracao || '0m';
       newActivity.descricao = descricao || '';
-      newActivity.status = status || 'aberta';
+      
+      // Data de criação real
       newActivity.createdAt = new Date().toISOString();
+
+      // REGRA 7: Se tem fotos, já nasce finalizada
+      if (fotoUrls.length > 0) {
+        newActivity.status = 'finalizada';
+        newActivity.duracao = '0m'; // Se já nasceu com foto, execução foi imediata/prévia
+      } else {
+        newActivity.status = status || 'aberta';
+        newActivity.duracao = duracao || '0m';
+      }
+      
       newActivity.fotos = fotoUrls; 
+      
+      // REGRA 4: Vincula ao usuário
+      newActivity.userId = userId;
+      newActivity.userName = userName;
 
       const saved = await repo.create(newActivity);
       return res.json(saved);
 
     } catch (error) {
-      console.error("Erro ao criar atividade:", error);
+      console.error("Erro ao criar:", error);
       return res.status(500).json({ error: 'Erro ao processar atividade' });
     }
   },
@@ -97,31 +121,44 @@ export const ActivityController = {
   async update(req: Request, res: Response) {
       try {
         const id = req.params.id as string;
-        const { fotos, ...dadosUpdate } = req.body; // Separa as fotos do resto dos dados
+        const { fotos, ...dadosUpdate } = req.body; 
         
         const repo = getRepository(Activity);
         const activity = await repo.findById(id);
         
         if (!activity) return res.status(404).json({ error: 'Atividade não encontrada' });
         
-        // 1. Protege campos sensíveis que não devem ser alterados manualmente
+        // Protege campos sensíveis
         delete dadosUpdate.createdAt;
-        delete dadosUpdate.duracao;
+        delete dadosUpdate.duracao; // Importante: não aceita duração vinda do front no update simples
 
-        // 2. Se houver fotos novas ou removidas, processa novamente
+        // Processa fotos novas
         if (fotos) {
             const novasUrls = await processImages(fotos);
             activity.fotos = novasUrls;
+            
+            // REGRA 7 (No Update): Se adicionou fotos e estava aberta, finaliza E CALCULA O TEMPO
+            if (novasUrls.length > 0 && activity.status === 'aberta') {
+                activity.status = 'finalizada';
+                
+                // --- MELHORIA APLICADA AQUI ---
+                // Calcula a duração final baseada no tempo decorrido desde a criação
+                activity.duracao = calculateDuration(activity.createdAt);
+                console.log(`🏁 Atividade finalizada automaticamente via upload. Duração final: ${activity.duracao}`);
+            }
         }
 
-        // 3. Atualiza os outros campos (título, status, descrição...)
         Object.assign(activity, dadosUpdate);
+
+        // REGRA 6 (No Update): Recalcula título se mudou dados de Roçada
+        if (activity.categoria === 'Roçada') {
+             activity.titulo = `Roçada - ${activity.subcategoria} - ${activity.setor}`;
+        }
 
         const updated = await repo.update(activity);
         return res.json(updated);
 
       } catch (error) { 
-        console.error("Erro ao atualizar:", error);
         return res.status(500).json({ error: 'Erro ao atualizar atividade' }); 
       }
   },
@@ -140,7 +177,15 @@ export const ActivityController = {
         const repo = getRepository(Activity);
         const activity = await repo.findById(id);
         if(activity) {
-            activity.status = activity.status === 'aberta' ? 'finalizada' : 'aberta';
+            const novoStatus = activity.status === 'aberta' ? 'finalizada' : 'aberta';
+            activity.status = novoStatus;
+
+            // --- MELHORIA APLICADA AQUI ---
+            // Se o admin finalizou manualmente, também calculamos o tempo final
+            if (novoStatus === 'finalizada') {
+                activity.duracao = calculateDuration(activity.createdAt);
+            }
+
             await repo.update(activity);
             return res.json(activity);
         }
@@ -150,7 +195,6 @@ export const ActivityController = {
   // --- ROBÔ DE DURAÇÃO ---
   async updateOpenActivitiesDuration() {
     try {
-        // console.log("⏰ Rodando atualização de durações...");
         const repo = getRepository(Activity);
         const activities = await repo.find();
         
