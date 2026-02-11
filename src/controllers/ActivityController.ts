@@ -80,7 +80,7 @@ export const ActivityController = {
 
       // REGRA 6: Se for Roçada, o título é gerado automaticamente
       if (categoria === 'Roçada') {
-         newActivity.titulo = `Roçada - ${subcategoria || 'Geral'} - ${setor || 'N/A'}`;
+         newActivity.titulo = `Roçada - ${subcategoria || 'Geral'}`;
       } else {
          newActivity.titulo = titulo || 'Sem Título';
       }
